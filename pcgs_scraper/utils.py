@@ -14,6 +14,24 @@ import time
 import requests
 
 from bs4.element import NavigableString
+import cloudscraper
+
+instance_cache = {}
+
+
+def get_or_load_scraper(force_reload: bool = False) -> cloudscraper.CloudScraper:
+    """Load new instance of cloud scraper or get existing from cache
+
+    Args:
+        force_reload: whether to forcefully reload a new instance. This will
+            update the cached item.
+    Returns:
+        instance of cloudscraper.CloudScraper for making requests.
+    """
+    if "scraper" not in instance_cache or force_reload:
+        scraper = cloudscraper.create_scraper()
+        instance_cache["scraper"] = scraper
+    return instance_cache["scraper"]
 
 
 ##################
@@ -27,7 +45,8 @@ def request_page(page_url):
     :param page_url: url to request
     :return: requested page if its working, error message with status if not
     """
-    response = requests.get(page_url)
+    scraper = get_or_load_scraper()
+    response = scraper.get(page_url)
     if response.status_code == 429:
         # too many requests
         retry_after = response.headers['retry-after']
