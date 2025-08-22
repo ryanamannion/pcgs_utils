@@ -1,0 +1,17 @@
+[project]
+name = "pcgs"
+version = "0.1.0"
+description = "Workspace for PCGS utilities"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pcgs-api",
+    "pcgs-scraper"
+]
+
+[tool.uv.sources]
+pcgs-api = { workspace = true }
+pcgs-scraper = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
