@@ -17,8 +17,8 @@ from copy import deepcopy
 
 from nltk.metrics import edit_distance
 
-from src.pcgs_scraper.utils import YEAR, DENOM_CI, MINT_CI       # regex
-from src.pcgs_scraper.utils import fold_denoms, price_table
+from packages.pcgs_scraper.src.pcgs_scraper.utils import YEAR, DENOM_CI, MINT_CI       # regex
+from packages.pcgs_scraper.src.pcgs_scraper.utils import fold_denoms, price_table
 
 
 def validate_query(query_str, verbose=True):
