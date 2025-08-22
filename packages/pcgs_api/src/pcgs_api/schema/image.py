@@ -12,3 +12,9 @@ class Image(CustomBaseModel):
     width: int = Annotated[int, Field(strict=True, ge=0)]
     height: int = Annotated[int, Field(strict=True, ge=0)]
     image_description: str = ""
+
+
+class ImageSummary(CustomBaseModel):
+    url: str
+    resolution: str
+    description: str
