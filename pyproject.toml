@@ -1,7 +1,17 @@
 [project]
 name = "pcgs-scraper"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0a0"
+description = "Tools for scraping coin data from PCGS"
 readme = "README.md"
+authors = [
+    {name = "Ryan A. Mannion", email = "rmannion16@gmail.com"}
+]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "beautifulsoup4>=4.13.4",
+    "ft>=1.0.0",
+    "requests>=2.32.5",
+]
+
+[project.urls]
+Repository = "https://github.com/ryanamannion/pcgs_scraper"
