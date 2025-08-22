@@ -15,3 +15,8 @@ pcgs-scraper = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]
