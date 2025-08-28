@@ -18,3 +18,8 @@ class ImageSummary(CustomBaseModel):
     url: str
     resolution: str
     description: str
+
+
+class CoinFactsImage(CustomBaseModel):
+    thumbnail: str
+    fullsize: str

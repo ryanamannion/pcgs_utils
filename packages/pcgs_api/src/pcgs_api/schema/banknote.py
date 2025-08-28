@@ -1,6 +1,6 @@
 from typing import Annotated, Optional
 
-from pydantic import Field, conint
+from pydantic import Field
 
 from pcgs_api.schema.shared import CustomBaseModel
 from pcgs_api.schema.image import Image, ImageSummary
