@@ -9,6 +9,8 @@ This repository contains tools for programmatic access to coin data from the Pro
 
 Python wrapper for the PCGS Public API.
 
+For more detail see the [pcgs_api README](packages/pcgs_api/README.md)
+
 Official PCGS documentation can be found here: https://www.pcgs.com/publicapi/documentation
 
 Swagger Docs for the API can be found here: https://api.pcgs.com/publicapi/swagger/ui/index

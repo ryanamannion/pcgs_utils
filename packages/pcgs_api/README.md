@@ -2,6 +2,26 @@
 
 Python client for the [PCGS Public API](https://www.pcgs.com/publicapi).
 
+## Documentation
+
+To build and view the documentation locally, use [sphinx](https://www.sphinx-doc.org/en/master/).
+
+This is made simple with a `justfile` in the project root. `just` commands can be run from any subdirectory of this repository.
+
+Prerequisite: install [`just`](https://github.com/casey/just?tab=readme-ov-file#installation)
+
+To build the docs, run:
+
+```bash
+$ just build-docs
+```
+
+To view the docs in your browser, run
+
+```bash
+$ just open-docs
+```
+
 ## Installation
 
 ```bash
