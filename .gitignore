@@ -6,4 +6,4 @@
 .idea/
 *.env
 
-packages/pcgs_api/docs/_build.*
+packages/pcgs_api/docs/_build*
