@@ -6,13 +6,13 @@ network requests are made.
 
 from __future__ import annotations
 
-import json
+from contextlib import contextmanager
 from datetime import date, timedelta
+from typing import Generator
 from unittest.mock import patch
 
 import httpx
 import pytest
-import pytest_asyncio
 
 from pcgs_api.client import PCGSClient, RateLimitExceeded
 from pcgs_api.schema.coin import AuctionListResponse, AuctionResponse, CoinFacts, CoinImagesResponse
@@ -47,7 +47,10 @@ def _make_transport(responses: dict[str, dict]) -> httpx.MockTransport:
 
 
 def _client_with(responses: dict[str, dict], daily_limit: int = 1_000) -> PCGSClient:
-    """Return a PCGSClient wired to a mock transport.
+    """Return a PCGSClient wired to a mock transport for async tests.
+
+    Sets ``client._http`` directly so the persistent-client path in ``_get``
+    is used, matching normal async context-manager usage.
 
     Args:
         responses: Passed straight to :func:`_make_transport`.
@@ -63,6 +66,33 @@ def _client_with(responses: dict[str, dict], daily_limit: int = 1_000) -> PCGSCl
         headers={"Authorization": f"Bearer {_FAKE_KEY}"},
     )
     return client
+
+
+@contextmanager
+def _sync_client_with(
+    responses: dict[str, dict], daily_limit: int = 1_000
+) -> Generator[PCGSClient, None, None]:
+    """Context manager that yields a PCGSClient wired for sync tests.
+
+    Sync calls use the one-shot ``async with httpx.AsyncClient(...)`` path in
+    ``_get``, so we patch the class in the client module to inject the mock
+    transport on construction.
+
+    Args:
+        responses: Passed straight to :func:`_make_transport`.
+        daily_limit: Override the daily request cap.
+
+    Yields:
+        A configured :class:`~pcgs_api.client.PCGSClient`.
+    """
+    transport = _make_transport(responses)
+    original = httpx.AsyncClient
+
+    with patch(
+        "pcgs_api.client.httpx.AsyncClient",
+        side_effect=lambda **kwargs: original(transport=transport, **kwargs),
+    ):
+        yield PCGSClient(api_key=_FAKE_KEY, daily_limit=daily_limit)
 
 
 # ---------------------------------------------------------------------------
@@ -180,11 +210,11 @@ async def test_call_counts_increment(coin_facts_body):
     assert client.calls_this_session == 0
     assert client.calls_today == 0
 
-    await client.get_coin_facts_by_cert_no("38109793")
+    await client.get_coin_facts_by_cert_no_async("38109793")
     assert client.calls_this_session == 1
     assert client.calls_today == 1
 
-    await client.get_coin_facts_by_cert_no("38109793")
+    await client.get_coin_facts_by_cert_no_async("38109793")
     assert client.calls_this_session == 2
     assert client.calls_today == 2
 
@@ -197,7 +227,7 @@ async def test_remaining_calls_decrements(coin_facts_body):
 
     assert client.remaining_calls_today == 10
 
-    await client.get_coin_facts_by_cert_no("38109793")
+    await client.get_coin_facts_by_cert_no_async("38109793")
     assert client.remaining_calls_today == 9
 
     await client.close()
@@ -207,10 +237,10 @@ async def test_remaining_calls_decrements(coin_facts_body):
 async def test_rate_limit_exceeded_raises(coin_facts_body):
     client = _client_with({"/coindetail/GetCoinFactsByCertNo": coin_facts_body}, daily_limit=1)
 
-    await client.get_coin_facts_by_cert_no("38109793")  # consumes the only call
+    await client.get_coin_facts_by_cert_no_async("38109793")  # consumes the only call
 
     with pytest.raises(RateLimitExceeded):
-        await client.get_coin_facts_by_cert_no("38109793")
+        await client.get_coin_facts_by_cert_no_async("38109793")
 
     await client.close()
 
@@ -218,11 +248,11 @@ async def test_rate_limit_exceeded_raises(coin_facts_body):
 @pytest.mark.asyncio
 async def test_rate_limit_error_message_contains_reset_date(coin_facts_body):
     client = _client_with({"/coindetail/GetCoinFactsByCertNo": coin_facts_body}, daily_limit=1)
-    await client.get_coin_facts_by_cert_no("38109793")
+    await client.get_coin_facts_by_cert_no_async("38109793")
 
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     with pytest.raises(RateLimitExceeded, match=tomorrow):
-        await client.get_coin_facts_by_cert_no("38109793")
+        await client.get_coin_facts_by_cert_no_async("38109793")
 
     await client.close()
 
@@ -231,7 +261,7 @@ async def test_rate_limit_error_message_contains_reset_date(coin_facts_body):
 async def test_daily_count_resets_on_new_day(coin_facts_body):
     client = _client_with({"/coindetail/GetCoinFactsByCertNo": coin_facts_body})
 
-    await client.get_coin_facts_by_cert_no("38109793")
+    await client.get_coin_facts_by_cert_no_async("38109793")
     assert client.calls_today == 1
 
     # Simulate the calendar rolling over to tomorrow.
@@ -245,7 +275,7 @@ async def test_daily_count_resets_on_new_day(coin_facts_body):
 async def test_session_count_survives_day_rollover(coin_facts_body):
     client = _client_with({"/coindetail/GetCoinFactsByCertNo": coin_facts_body})
 
-    await client.get_coin_facts_by_cert_no("38109793")
+    await client.get_coin_facts_by_cert_no_async("38109793")
     client._reset_date = date.today() - timedelta(days=1)
     _ = client.calls_today  # triggers reset
 
@@ -295,7 +325,7 @@ async def test_bearer_token_sent(coin_facts_body):
         headers={"Authorization": f"Bearer {_FAKE_KEY}"},
     )
 
-    await client.get_coin_facts_by_cert_no("38109793")
+    await client.get_coin_facts_by_cert_no_async("38109793")
     await client.close()
 
     assert len(captured) == 1
@@ -310,7 +340,7 @@ async def test_bearer_token_sent(coin_facts_body):
 @pytest.mark.asyncio
 async def test_get_coin_facts_by_cert_no(coin_facts_body):
     client = _client_with({"/GetCoinFactsByCertNo": coin_facts_body})
-    result = await client.get_coin_facts_by_cert_no("38109793")
+    result = await client.get_coin_facts_by_cert_no_async("38109793")
     await client.close()
 
     assert isinstance(result, CoinFacts)
@@ -322,7 +352,7 @@ async def test_get_coin_facts_by_cert_no(coin_facts_body):
 @pytest.mark.asyncio
 async def test_get_coin_facts_by_grade(coin_facts_body):
     client = _client_with({"/GetCoinFactsByGrade": coin_facts_body})
-    result = await client.get_coin_facts_by_grade("2986", 65)
+    result = await client.get_coin_facts_by_grade_async("2986", 65)
     await client.close()
 
     assert isinstance(result, CoinFacts)
@@ -332,7 +362,7 @@ async def test_get_coin_facts_by_grade(coin_facts_body):
 @pytest.mark.asyncio
 async def test_get_coin_facts_by_barcode(no_data_body):
     client = _client_with({"/GetCoinFactsByBarcode": no_data_body})
-    result = await client.get_coin_facts_by_barcode("000000000000", "PCGS")
+    result = await client.get_coin_facts_by_barcode_async("000000000000", "PCGS")
     await client.close()
 
     assert isinstance(result, CoinFacts)
@@ -342,7 +372,7 @@ async def test_get_coin_facts_by_barcode(no_data_body):
 @pytest.mark.asyncio
 async def test_get_apr_by_cert_no(no_data_body):
     client = _client_with({"/GetAPRByCertNo": no_data_body})
-    result = await client.get_apr_by_cert_no("25252728")
+    result = await client.get_apr_by_cert_no_async("25252728")
     await client.close()
 
     assert isinstance(result, AuctionResponse)
@@ -352,7 +382,7 @@ async def test_get_apr_by_cert_no(no_data_body):
 @pytest.mark.asyncio
 async def test_get_apr_by_grade(apr_by_grade_body):
     client = _client_with({"/GetAPRByGrade": apr_by_grade_body})
-    result = await client.get_apr_by_grade("3972", 65, number_of_records=1)
+    result = await client.get_apr_by_grade_async("3972", 65, number_of_records=1)
     await client.close()
 
     assert isinstance(result, AuctionListResponse)
@@ -364,7 +394,7 @@ async def test_get_apr_by_grade(apr_by_grade_body):
 @pytest.mark.asyncio
 async def test_get_apr_by_barcode(apr_by_grade_body):
     client = _client_with({"/GetAPRByBarcode": apr_by_grade_body})
-    result = await client.get_apr_by_barcode("000000000000", "PCGS")
+    result = await client.get_apr_by_barcode_async("000000000000", "PCGS")
     await client.close()
 
     assert isinstance(result, AuctionListResponse)
@@ -373,10 +403,131 @@ async def test_get_apr_by_barcode(apr_by_grade_body):
 @pytest.mark.asyncio
 async def test_get_coin_images_by_cert_no(coin_images_body):
     client = _client_with({"/GetImagesByCertNo": coin_images_body})
-    result = await client.get_coin_images_by_cert_no("38109793")
+    result = await client.get_coin_images_by_cert_no_async("38109793")
     await client.close()
 
     assert isinstance(result, CoinImagesResponse)
     assert result.has_true_view_image is True
     assert len(result.images) == 1
     assert result.images[0].resolution == "6000x3000"
+
+
+# ---------------------------------------------------------------------------
+# Sync interface
+# ---------------------------------------------------------------------------
+
+
+def test_sync_methods_exist():
+    """Every *_async method should have a generated plain-name sync counterpart."""
+    import inspect
+
+    async_methods = [
+        name for name, val in inspect.getmembers(PCGSClient, inspect.iscoroutinefunction)
+        if name.endswith("_async")
+    ]
+    for name in async_methods:
+        sync_name = name[: -len("_async")]
+        assert hasattr(PCGSClient, sync_name), f"missing sync wrapper '{sync_name}'"
+
+
+def test_sync_call_counts_increment(coin_facts_body):
+    with _sync_client_with({"/coindetail/GetCoinFactsByCertNo": coin_facts_body}) as client:
+        assert client.calls_this_session == 0
+
+        client.get_coin_facts_by_cert_no("38109793")
+        assert client.calls_this_session == 1
+        assert client.calls_today == 1
+
+        client.get_coin_facts_by_cert_no("38109793")
+        assert client.calls_this_session == 2
+        assert client.calls_today == 2
+
+
+def test_sync_rate_limit_exceeded(coin_facts_body):
+    with _sync_client_with(
+        {"/coindetail/GetCoinFactsByCertNo": coin_facts_body}, daily_limit=1
+    ) as client:
+        client.get_coin_facts_by_cert_no("38109793")
+
+        with pytest.raises(RateLimitExceeded):
+            client.get_coin_facts_by_cert_no("38109793")
+
+
+def test_sync_get_coin_facts_by_cert_no(coin_facts_body):
+    with _sync_client_with({"/GetCoinFactsByCertNo": coin_facts_body}) as client:
+        result = client.get_coin_facts_by_cert_no("38109793")
+
+    assert isinstance(result, CoinFacts)
+    assert result.is_valid_request is True
+    assert result.pcgs_no == "2986"
+    assert result.name == "1977 1C, RD"
+
+
+def test_sync_get_coin_facts_by_grade(coin_facts_body):
+    with _sync_client_with({"/GetCoinFactsByGrade": coin_facts_body}) as client:
+        result = client.get_coin_facts_by_grade("2986", 65)
+
+    assert isinstance(result, CoinFacts)
+    assert result.is_valid_request is True
+
+
+def test_sync_get_coin_facts_by_barcode(no_data_body):
+    with _sync_client_with({"/GetCoinFactsByBarcode": no_data_body}) as client:
+        result = client.get_coin_facts_by_barcode("000000000000", "PCGS")
+
+    assert isinstance(result, CoinFacts)
+    assert result.server_message == "No data found"
+
+
+def test_sync_get_apr_by_cert_no(no_data_body):
+    with _sync_client_with({"/GetAPRByCertNo": no_data_body}) as client:
+        result = client.get_apr_by_cert_no("25252728")
+
+    assert isinstance(result, AuctionResponse)
+
+
+def test_sync_get_apr_by_grade(apr_by_grade_body):
+    with _sync_client_with({"/GetAPRByGrade": apr_by_grade_body}) as client:
+        result = client.get_apr_by_grade("3972", 65, number_of_records=1)
+
+    assert isinstance(result, AuctionListResponse)
+    assert result.pcgs_no == "3972"
+    assert result.auctions[0].price == 145.0
+
+
+def test_sync_get_apr_by_barcode(apr_by_grade_body):
+    with _sync_client_with({"/GetAPRByBarcode": apr_by_grade_body}) as client:
+        result = client.get_apr_by_barcode("000000000000", "PCGS")
+
+    assert isinstance(result, AuctionListResponse)
+
+
+def test_sync_get_coin_images_by_cert_no(coin_images_body):
+    with _sync_client_with({"/GetImagesByCertNo": coin_images_body}) as client:
+        result = client.get_coin_images_by_cert_no("38109793")
+
+    assert isinstance(result, CoinImagesResponse)
+    assert result.has_true_view_image is True
+    assert result.images[0].resolution == "6000x3000"
+
+
+def test_sync_bearer_token_sent(coin_facts_body):
+    """Verify the Authorization header is sent on sync requests too."""
+    captured: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured.append(req)
+        return httpx.Response(200, json=coin_facts_body)
+
+    original = httpx.AsyncClient
+    with patch(
+        "pcgs_api.client.httpx.AsyncClient",
+        side_effect=lambda **kwargs: original(
+            transport=httpx.MockTransport(handler), **kwargs
+        ),
+    ):
+        client = PCGSClient(api_key=_FAKE_KEY)
+        client.get_coin_facts_by_cert_no("38109793")
+
+    assert len(captured) == 1
+    assert captured[0].headers["Authorization"] == f"Bearer {_FAKE_KEY}"

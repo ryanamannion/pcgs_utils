@@ -1,6 +1,6 @@
 # pcgs-api
 
-Async Python client for the [PCGS Public API](https://www.pcgs.com/publicapi).
+Python client for the [PCGS Public API](https://www.pcgs.com/publicapi).
 
 ## Installation
 
@@ -34,18 +34,27 @@ client = PCGSClient(api_key="your_key_here")
 
 ## Quick start
 
+Plain method names are synchronous and work in any Python script:
+
+```python
+from pcgs_api import PCGSClient
+
+client = PCGSClient()
+coin = client.get_coin_facts_by_cert_no("38109793", retrieve_all_data=True)
+print(coin.name, coin.grade, coin.price_guide_value)
+print(f"{client.remaining_calls_today} calls remaining")
+```
+
+For async codebases, append `_async` to any method name:
+
 ```python
 import asyncio
 from pcgs_api import PCGSClient
 
 async def main():
     async with PCGSClient() as client:
-        # Look up a coin by its certificate number
-        coin = await client.get_coin_facts_by_cert_no("38109793", retrieve_all_data=True)
+        coin = client.get_coin_facts_by_cert_no("38109793", retrieve_all_data=True)
         print(coin.name, coin.grade, coin.price_guide_value)
-
-        # Check how many API calls remain today
-        print(f"{client.remaining_calls_today} calls remaining")
 
 asyncio.run(main())
 ```
@@ -60,15 +69,15 @@ that would exceed the limit. For higher limits, contact
 ```python
 from pcgs_api import PCGSClient, RateLimitExceeded
 
-async with PCGSClient(daily_limit=1_000) as client:
-    print(client.calls_this_session)   # calls since instantiation
-    print(client.calls_today)          # calls today (resets at midnight)
-    print(client.remaining_calls_today)
+client = PCGSClient(daily_limit=1_000)
+print(client.calls_this_session)    # calls since instantiation
+print(client.calls_today)           # calls today (resets at midnight)
+print(client.remaining_calls_today)
 
-    try:
-        coin = await client.get_coin_facts_by_cert_no("38109793")
-    except RateLimitExceeded as e:
-        print(e)  # includes the date the limit resets
+try:
+    coin = client.get_coin_facts_by_cert_no("38109793")
+except RateLimitExceeded as e:
+    print(e)  # includes the date the limit resets
 ```
 
 The `daily_limit` parameter can be raised if you have a commercial licence:
@@ -77,26 +86,20 @@ The `daily_limit` parameter can be raised if you have a commercial licence:
 client = PCGSClient(daily_limit=10_000)
 ```
 
-## Client lifecycle
+## Sync vs async
 
-Using the client as an async context manager is recommended — it ensures the
-underlying connection pool is closed cleanly:
+Every endpoint method is available in two forms:
 
-```python
-async with PCGSClient() as client:
-    ...
-```
+| Form | Example | When to use |
+|---|---|---|
+| Plain name | `client.get_coin_facts_by_cert_no(...)` | Scripts, notebooks, simple tools |
+| `_async` suffix | `await client.get_coin_facts_by_cert_no_async(...)` | Async applications, frameworks |
 
-For longer-lived use (e.g. inside a web server), manage the lifecycle
-manually:
+Both forms share the same rate-limit counters and call tracking.
 
-```python
-client = PCGSClient()
-try:
-    ...
-finally:
-    await client.close()
-```
+For async usage, the `async with PCGSClient() as client:` context manager
+reuses a single connection pool across calls. Sync calls open and close a
+connection per request automatically — no lifecycle management needed.
 
 ---
 
@@ -110,10 +113,10 @@ Look up a certified coin by its 7–8 digit certificate number.
 
 ```python
 # Basic lookup
-coin = await client.get_coin_facts_by_cert_no("38109793")
+coin = client.get_coin_facts_by_cert_no("38109793")
 
 # Full data: includes images, auction prices realized, and population
-coin = await client.get_coin_facts_by_cert_no("38109793", retrieve_all_data=True)
+coin = client.get_coin_facts_by_cert_no("38109793", retrieve_all_data=True)
 
 print(coin.name)             # "1966 25C SMS"
 print(coin.grade)            # "SP66"
@@ -137,7 +140,7 @@ Returns a `CoinFacts` object. When `retrieve_all_data=False` (the default),
 Look up coin facts by PCGS specification number and numeric grade.
 
 ```python
-coin = await client.get_coin_facts_by_grade("2986", grade_no=65)
+coin = client.get_coin_facts_by_grade("2986", grade_no=65)
 
 print(coin.name)    # "1977 1C, RD"
 print(coin.mintage) # "4469930000"
@@ -152,7 +155,7 @@ Look up a coin using the barcode on the holder. `grading_service` must be
 `"PCGS"` or `"NGC"`.
 
 ```python
-coin = await client.get_coin_facts_by_barcode("123456789012", "PCGS")
+coin = client.get_coin_facts_by_barcode("123456789012", "PCGS")
 ```
 
 #### `get_apr_by_cert_no(cert_no)`
@@ -160,7 +163,7 @@ coin = await client.get_coin_facts_by_barcode("123456789012", "PCGS")
 Fetch the auction price history for a specific certified coin.
 
 ```python
-result = await client.get_apr_by_cert_no("49771606")
+result = client.get_apr_by_cert_no("49771606")
 
 print(result.name)   # "1934 5C"
 print(result.grade)  # "MS65"
@@ -176,7 +179,7 @@ Fetch auction price history across all coins of a given type and grade.
 Dates use `mm-dd-yyyy` format.
 
 ```python
-result = await client.get_apr_by_grade(
+result = client.get_apr_by_grade(
     "3972",
     grade_no=65,
     start_date="01-01-2024",
@@ -193,7 +196,7 @@ for auction in result.auctions or []:
 Fetch auction price history using a holder barcode.
 
 ```python
-result = await client.get_apr_by_barcode("123456789012", "PCGS")
+result = client.get_apr_by_barcode("123456789012", "PCGS")
 ```
 
 #### `get_coin_images_by_cert_no(cert_no)`
@@ -201,7 +204,7 @@ result = await client.get_apr_by_barcode("123456789012", "PCGS")
 Fetch all available image URLs for a certified coin.
 
 ```python
-result = await client.get_coin_images_by_cert_no("38109793")
+result = client.get_coin_images_by_cert_no("38109793")
 
 print(result.has_true_view_image)  # True
 for img in result.images or []:
@@ -218,7 +221,7 @@ for img in result.images or []:
 Fetch banknote certification details by certificate number.
 
 ```python
-result = await client.get_banknote_by_cert_no("12345678")
+result = client.get_banknote_by_cert_no("12345678")
 
 if result.is_valid_request and result.banknote:
     note = result.banknote
@@ -230,7 +233,7 @@ if result.is_valid_request and result.banknote:
 Fetch banknote records by PCGS specification number and grade.
 
 ```python
-result = await client.get_banknote_by_grade("123456", grade_no=65)
+result = client.get_banknote_by_grade("123456", grade_no=65)
 
 for note in result.banknotes or []:
     print(note.cert_no, note.grade)
@@ -241,7 +244,7 @@ for note in result.banknotes or []:
 Fetch images for a certified banknote.
 
 ```python
-result = await client.get_banknote_images_by_cert_no("12345678")
+result = client.get_banknote_images_by_cert_no("12345678")
 
 print(result.has_obverse_image, result.has_reverse_image)
 for img in result.images:
@@ -258,7 +261,7 @@ API key.
 #### `get_orders_by_submission_no(submission_no)`
 
 ```python
-result = await client.get_orders_by_submission_no("1234567")
+result = client.get_orders_by_submission_no("1234567")
 
 for order in result.orders or []:
     print(order.submission_no, order.order_status, order.item_count)
@@ -271,7 +274,7 @@ for order in result.orders or []:
 Dates use `mm-dd-yyyy` format. Results are paginated.
 
 ```python
-result = await client.get_orders_by_date_range(
+result = client.get_orders_by_date_range(
     start_date="01-01-2025",
     end_date="03-31-2025",
     page_no=1,

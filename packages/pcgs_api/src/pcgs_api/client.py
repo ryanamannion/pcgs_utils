@@ -1,27 +1,32 @@
-"""Async PCGS Public API client.
+"""PCGS Public API client — sync and async.
 
-Example:
-    Using the client as an async context manager (recommended)::
+Sync usage (default, no ``async``/``await`` required):
 
-        async with PCGSClient() as client:
-            result = await client.get_coin_facts_by_cert_no("12345678")
-            print(client.calls_this_session)
+    client = PCGSClient()
+    result = client.get_coin_facts_by_cert_no("12345678")
+    print(client.calls_this_session)
 
-    Manual lifecycle::
+Async usage (for async codebases):
 
-        client = PCGSClient()
-        result = await client.get_coin_facts_by_cert_no("12345678")
-        await client.close()
+    async with PCGSClient() as client:
+        result = await client.get_coin_facts_by_cert_no_async("12345678")
+        print(client.calls_this_session)
+
+Every method is available in both forms.  The plain name is always the
+blocking sync version; append ``_async`` for the awaitable coroutine.  Both
+share the same rate-limit counters and daily-call tracking.
 
 The API key is read from the ``PCGS_ACCESS_TOKEN`` environment variable by
 default, or passed explicitly as ``api_key``.  Free-tier accounts are limited
-to 1,000 requests per day; the client tracks session and daily call counts and
-raises :exc:`RateLimitExceeded` before making a call that would exceed the
-configured limit.
+to 1,000 requests per day; the client raises :exc:`RateLimitExceeded` before
+making a call that would exceed the configured limit.
 """
 
 from __future__ import annotations
 
+import asyncio
+import functools
+import inspect
 import os
 from datetime import date, timedelta
 from typing import Any, Optional
@@ -51,8 +56,39 @@ class RateLimitExceeded(Exception):
     """Raised when the daily API call limit would be exceeded."""
 
 
+def _with_sync_methods(cls: type) -> type:
+    """Class decorator that generates a plain-name blocking wrapper for every
+    public ``*_async`` coroutine method defined directly on the class.
+
+    For example, ``get_coin_facts_by_cert_no_async`` produces
+    ``get_coin_facts_by_cert_no``.  The wrapper is created with
+    :func:`functools.wraps` so it inherits the name, docstring, and
+    annotations of the async original.
+    """
+    for name, method in list(vars(cls).items()):
+        if not name.endswith("_async") or not inspect.iscoroutinefunction(method):
+            continue
+
+        sync_name = name[: -len("_async")]
+
+        def make_sync(async_fn: Any) -> Any:
+            @functools.wraps(async_fn)
+            def sync_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+                return asyncio.run(async_fn(self, *args, **kwargs))
+            return sync_wrapper
+
+        setattr(cls, sync_name, make_sync(method))
+
+    return cls
+
+
+@_with_sync_methods
 class PCGSClient:
-    """Async client for the PCGS Public API.
+    """PCGS Public API client with sync and async interfaces.
+
+    Plain method names (e.g. ``get_coin_facts_by_cert_no``) are blocking and
+    safe to call from ordinary Python code.  Append ``_async`` to get the
+    awaitable coroutine version (e.g. ``get_coin_facts_by_cert_no_async``).
 
     Args:
         api_key: PCGS API key. Falls back to the ``PCGS_ACCESS_TOKEN``
@@ -85,10 +121,12 @@ class PCGSClient:
         self._daily_count: int = 0
         self._reset_date: date = date.today()
 
+        # Set by __aenter__ to reuse the connection pool across async calls.
+        # When None, _get() opens a one-shot client per request (sync path).
         self._http: Optional[httpx.AsyncClient] = None
 
     # ------------------------------------------------------------------
-    # Context-manager support
+    # Async context-manager support
     # ------------------------------------------------------------------
 
     async def __aenter__(self) -> PCGSClient:
@@ -142,15 +180,17 @@ class PCGSClient:
             self._daily_count = 0
             self._reset_date = today
 
-    def _get_http(self) -> httpx.AsyncClient:
-        if self._http is None:
-            self._http = httpx.AsyncClient(
-                base_url=self._base_url,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-        return self._http
+    def _default_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """Make an authenticated GET request, enforcing the rate limit.
+
+        When ``self._http`` is set (async context manager), the existing
+        connection pool is reused.  Otherwise a one-shot client is opened and
+        closed for the single request, keeping each ``asyncio.run()`` call
+        self-contained.
+        """
         self._maybe_reset_daily_count()
         if self._daily_count >= self._daily_limit:
             reset_day = self._reset_date + timedelta(days=1)
@@ -159,19 +199,25 @@ class PCGSClient:
                 f"Resets on {reset_day}."
             )
 
-        response = await self._get_http().get(path, params=params or {})
-        response.raise_for_status()
+        if self._http is not None:
+            response = await self._http.get(path, params=params or {})
+        else:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                headers=self._default_headers(),
+            ) as http:
+                response = await http.get(path, params=params or {})
 
+        response.raise_for_status()
         self._daily_count += 1
         self._session_count += 1
-
         return response.json()
 
     # ------------------------------------------------------------------
     # Coin detail endpoints
     # ------------------------------------------------------------------
 
-    async def get_coin_facts_by_cert_no(
+    async def get_coin_facts_by_cert_no_async(
         self,
         cert_no: str,
         retrieve_all_data: bool = False,
@@ -192,7 +238,7 @@ class PCGSClient:
         )
         return CoinFacts(**data)
 
-    async def get_coin_facts_by_barcode(
+    async def get_coin_facts_by_barcode_async(
         self,
         barcode: str,
         grading_service: str,
@@ -212,7 +258,7 @@ class PCGSClient:
         )
         return CoinFacts(**data)
 
-    async def get_coin_facts_by_grade(
+    async def get_coin_facts_by_grade_async(
         self,
         pcgs_no: str,
         grade_no: int,
@@ -222,7 +268,7 @@ class PCGSClient:
 
         Note:
             This endpoint does **not** return auction prices or price guide
-            values. Use :meth:`get_coin_facts_by_cert_no` with
+            values. Use :meth:`get_coin_facts_by_cert_no_async` with
             ``retrieve_all_data=True`` for pricing data.
 
         Args:
@@ -243,7 +289,7 @@ class PCGSClient:
         )
         return CoinFacts(**data)
 
-    async def get_apr_by_cert_no(self, cert_no: str) -> AuctionResponse:
+    async def get_apr_by_cert_no_async(self, cert_no: str) -> AuctionResponse:
         """Fetch auction prices realized for a specific certified coin.
 
         Args:
@@ -255,7 +301,7 @@ class PCGSClient:
         data = await self._get(f"/coindetail/GetAPRByCertNo/{cert_no}")
         return AuctionResponse(**data)
 
-    async def get_apr_by_grade(
+    async def get_apr_by_grade_async(
         self,
         pcgs_no: str,
         grade_no: int,
@@ -291,7 +337,7 @@ class PCGSClient:
         data = await self._get("/coindetail/GetAPRByGrade", params)
         return AuctionListResponse(**data)
 
-    async def get_apr_by_barcode(
+    async def get_apr_by_barcode_async(
         self,
         barcode: str,
         grading_service: str,
@@ -321,7 +367,7 @@ class PCGSClient:
         data = await self._get("/coindetail/GetAPRByBarcode", params)
         return AuctionListResponse(**data)
 
-    async def get_coin_images_by_cert_no(self, cert_no: str) -> CoinImagesResponse:
+    async def get_coin_images_by_cert_no_async(self, cert_no: str) -> CoinImagesResponse:
         """Fetch all available images for a certified coin.
 
         Args:
@@ -340,7 +386,7 @@ class PCGSClient:
     # Banknote detail endpoints
     # ------------------------------------------------------------------
 
-    async def get_banknote_by_cert_no(
+    async def get_banknote_by_cert_no_async(
         self,
         cert_no: str,
         language_code: Optional[str] = None,
@@ -361,7 +407,7 @@ class PCGSClient:
         data = await self._get("/banknotedetail/GetBanknoteByCertNo", params)
         return BanknoteResponse(**data)
 
-    async def get_banknote_by_grade(
+    async def get_banknote_by_grade_async(
         self,
         pcgs_no: str,
         grade_no: int,
@@ -381,7 +427,7 @@ class PCGSClient:
         )
         return BanknotesResponse(**data)
 
-    async def get_banknote_images_by_cert_no(
+    async def get_banknote_images_by_cert_no_async(
         self,
         cert_no: str,
     ) -> BanknoteImagesResponse:
@@ -403,7 +449,7 @@ class PCGSClient:
     # Order endpoints
     # ------------------------------------------------------------------
 
-    async def get_orders_by_submission_no(
+    async def get_orders_by_submission_no_async(
         self,
         submission_no: str,
     ) -> OrdersResponse:
@@ -425,7 +471,7 @@ class PCGSClient:
         )
         return OrdersResponse(**data)
 
-    async def get_orders_by_date_range(
+    async def get_orders_by_date_range_async(
         self,
         start_date: str,
         end_date: str,
