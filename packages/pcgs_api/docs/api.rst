@@ -1,8 +1,12 @@
 API Reference
 =============
 
-Client
-------
+Authenticated Client (api.pcgs.com)
+------------------------------------
+
+The :class:`~pcgs_api.client.PCGSClient` wraps the official PCGS Public API at
+``https://api.pcgs.com/publicapi``.  An API key is required — pass it as
+``api_key`` or set the ``PCGS_ACCESS_TOKEN`` environment variable.
 
 .. autoclass:: pcgs_api.client.PCGSClient
    :members:
@@ -10,6 +14,34 @@ Client
    :special-members: __init__
 
 .. autoexception:: pcgs_api.client.RateLimitExceeded
+
+SpecSearch Client (collectorsuniverse.com)
+------------------------------------------
+
+The :class:`~pcgs_api.spec_search.SpecSearchClient` wraps the internal
+autocomplete search endpoint on ``www.collectorsuniverse.com``.  No API key is
+required.
+
+.. autoclass:: pcgs_api.spec_search.SpecSearchClient
+   :members:
+   :member-order: bysource
+   :special-members: __init__
+
+.. autoclass:: pcgs_api.spec_search.SearchType
+   :members:
+   :undoc-members:
+
+Schema — SpecSearch Results
+----------------------------
+
+.. autoclass:: pcgs_api.spec_search.PCGSCoinResult
+   :members:
+
+.. autoclass:: pcgs_api.spec_search.PCGSWorldCoinResult
+   :members:
+
+.. autoclass:: pcgs_api.spec_search.PSACardResult
+   :members:
 
 Schema — Coins
 --------------
